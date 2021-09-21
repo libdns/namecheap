@@ -264,7 +264,7 @@ func (c *Client) AddHosts(ctx context.Context, domain string, hosts []HostRecord
 
 	// Add the hosts to the existing hosts to try and preserve the original order.
 	existingHosts = append(existingHosts, hosts...)
-	_, err = c.SetHosts(ctx, domain, existingHosts)
+	_, err = c.setHosts(ctx, domain, existingHosts)
 	if err != nil {
 		return nil, err
 	}
@@ -294,10 +294,10 @@ func (c *Client) DeleteHosts(ctx context.Context, domain string, hosts []HostRec
 		}
 	}
 
-	return c.SetHosts(ctx, domain, updatedHosts)
+	return c.setHosts(ctx, domain, updatedHosts)
 }
 
-func (c *Client) SetHosts(ctx context.Context, domain string, hosts []HostRecord) ([]HostRecord, error) {
+func (c *Client) setHosts(ctx context.Context, domain string, hosts []HostRecord) ([]HostRecord, error) {
 	u, err := c.buildURL("namecheap.domains.dns.setHosts", domain, hosts...)
 	if err != nil {
 		return nil, err
@@ -310,6 +310,34 @@ func (c *Client) SetHosts(ctx context.Context, domain string, hosts []HostRecord
 
 	_, err = doRequest(req)
 	return hosts, err
+}
+
+// SetHosts creates or updates existing hosts. Existing hosts must have a host ID
+// otherwise the record is treated as a new host. Does not delete any existing hosts.
+func (c *Client) SetHosts(ctx context.Context, domain string, hosts []HostRecord) ([]HostRecord, error) {
+	existingHosts, err := c.GetHosts(ctx, domain)
+	if err != nil {
+		return nil, nil
+	}
+
+	var existingHostsByID = make(map[string]*HostRecord)
+	for i := range existingHosts {
+		existingHostsByID[existingHosts[i].HostID] = &existingHosts[i]
+	}
+
+	var newHosts []HostRecord
+	for _, host := range hosts {
+		if existingHost, found := existingHostsByID[host.HostID]; found {
+			// This will update the value in existingHosts
+			*existingHost = host
+		} else {
+			newHosts = append(newHosts, host)
+		}
+	}
+
+	existingHosts = append(existingHosts, newHosts...)
+
+	return c.setHosts(ctx, domain, existingHosts)
 }
 
 // buildURL builds a URL needed to talk to the namecheap API based on the query params.
