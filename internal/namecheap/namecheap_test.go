@@ -276,6 +276,110 @@ func TestSetHosts(t *testing.T) {
 	}
 }
 
+func TestSetHostsUpdatesExisting(t *testing.T) {
+	expected := map[string]string{
+		"ApiUser":     "testUser",
+		"ApiKey":      "testAPIKey",
+		"UserName":    "testUser",
+		"ClientIp":    "localhost",
+		"Command":     "namecheap.domains.dns.setHosts",
+		"TLD":         "com",
+		"SLD":         "domain",
+		"HostName1":   "@",
+		"RecordType1": string(namecheap.A),
+		"Address1":    "0.0.0.0",
+		"TTL1":        "1800",
+		"HostName2":   "www",
+		"RecordType2": string(namecheap.A),
+		"Address2":    "122.23.3.7",
+		"MXPref2":     "10",
+		"TTL2":        "1800",
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			ensureQueryParams(t, r, toURLValues(expected))
+			w.Write([]byte(setHostsResponse))
+		case http.MethodGet:
+			w.Write([]byte(getHostsResponse))
+		}
+	}))
+	t.Cleanup(ts.Close)
+	c, err := namecheap.NewClient("testAPIKey", "testUser", namecheap.WithEndpoint(ts.URL), namecheap.WithClientIP("localhost"))
+	if err != nil {
+		t.Fatalf("Error creating NewClient. Err: %s", err)
+	}
+
+	hosts := []namecheap.HostRecord{
+		{
+			Name:       "@",
+			RecordType: namecheap.A,
+			TTL:        uint16(1800),
+			HostID:     "12",
+			Address:    "0.0.0.0",
+		},
+	}
+
+	_, err = c.SetHosts(context.TODO(), "domain.com", hosts)
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+}
+
+func TestSetHostsAddsAndKeepsExisting(t *testing.T) {
+	expected := map[string]string{
+		"ApiUser":     "testUser",
+		"ApiKey":      "testAPIKey",
+		"UserName":    "testUser",
+		"ClientIp":    "localhost",
+		"Command":     "namecheap.domains.dns.setHosts",
+		"TLD":         "com",
+		"SLD":         "domain",
+		"Address1":    "1.2.3.4",
+		"HostName1":   "@",
+		"RecordType1": string(namecheap.A),
+		"MXPref1":     "10",
+		"TTL1":        "1800",
+		"Address2":    "122.23.3.7",
+		"HostName2":   "www",
+		"RecordType2": string(namecheap.A),
+		"MXPref2":     "10",
+		"TTL2":        "1800",
+		"HostName3":   "www",
+		"RecordType3": string(namecheap.A),
+		"TTL3":        "900",
+		"Address3":    "127.0.0.1",
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			ensureQueryParams(t, r, toURLValues(expected))
+			w.Write([]byte(setHostsResponse))
+		case http.MethodGet:
+			w.Write([]byte(getHostsResponse))
+		}
+	}))
+	t.Cleanup(ts.Close)
+	c, err := namecheap.NewClient("testAPIKey", "testUser", namecheap.WithEndpoint(ts.URL), namecheap.WithClientIP("localhost"))
+	if err != nil {
+		t.Fatalf("Error creating NewClient. Err: %s", err)
+	}
+
+	hosts := []namecheap.HostRecord{
+		{
+			Name:       "www",
+			RecordType: namecheap.A,
+			TTL:        uint16(900),
+			Address:    "127.0.0.1",
+		},
+	}
+
+	_, err = c.SetHosts(context.TODO(), "domain.com", hosts)
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+}
+
 func TestAddHostsNoExisting(t *testing.T) {
 	expectedValues := map[string]string{
 		"ApiUser":     "testUser",

@@ -34,9 +34,15 @@ func TestIntegration(t *testing.T) {
 			Value: "127.0.0.1",
 			TTL:   time.Second * 1799,
 		},
+		{
+			Type:  "A",
+			Name:  "www",
+			Value: "127.0.0.1",
+			TTL:   time.Second * 1799,
+		},
 	}
 
-	t.Log("Appending Records")
+	t.Logf("Appending: %d Records", len(newRecords))
 
 	addedRecords, err := p.AppendRecords(context.TODO(), *domain, newRecords)
 	if err != nil {
@@ -57,17 +63,98 @@ func TestIntegration(t *testing.T) {
 	}
 
 	firstRecord := records[0]
-	_, err = p.DeleteRecords(context.TODO(), *domain, []libdns.Record{firstRecord})
+
+	t.Logf("Removing record: %#v", firstRecord)
+	recordsRemoved, err := p.DeleteRecords(context.TODO(), *domain, []libdns.Record{firstRecord})
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	t.Logf("Records removed: %#v", recordsRemoved)
 
 	records, err = p.GetRecords(context.TODO(), *domain)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if len(records) != 0 {
-		t.Fatalf("Expected 0 but got: %v", len(records))
+	t.Logf("Final number of records: %d", len(records))
+
+	if len(records) != 1 {
+		t.Fatalf("Expected 1 but got: %v", len(records))
+	}
+}
+
+func TestSetRecordsKeepsExisting(t *testing.T) {
+	p := &namecheap.Provider{
+		APIKey:      *apiKey,
+		User:        *apiUser,
+		APIEndpoint: *apiEndpoint,
+	}
+
+	newRecords := []libdns.Record{
+		{
+			Type:  "A",
+			Name:  "@",
+			Value: "127.0.0.1",
+			TTL:   time.Second * 1799,
+		},
+		{
+			Type:  "A",
+			Name:  "www",
+			Value: "127.0.0.1",
+			TTL:   time.Second * 1799,
+		},
+	}
+
+	t.Logf("Appending: %d Records", len(newRecords))
+
+	addedRecords, err := p.AppendRecords(context.TODO(), *domain, newRecords)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Logf("Records appended: %#v", addedRecords)
+
+	records, err := p.GetRecords(context.TODO(), *domain)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(records) != 2 {
+		t.Fatalf("Expected 2 records. Got: %d", len(records))
+	}
+
+	records[0].Value = "0.0.0.0"
+
+	t.Log("Updating record")
+	updatedRecords, err := p.SetRecords(context.TODO(), *domain, records)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(updatedRecords) != 2 {
+		t.Fatalf("Expected 2 records. Got: %d", len(updatedRecords))
+	}
+
+	updatedRecords, err = p.GetRecords(context.TODO(), *domain)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Logf("Updated records: %#v", updatedRecords)
+
+	if len(updatedRecords) != 2 {
+		t.Fatalf("Expected 2 records. Got: %d", len(updatedRecords))
+	}
+
+	var updatedRecord *libdns.Record
+	for _, record := range updatedRecords {
+		if record.Value == "0.0.0.0" {
+			updatedRecord = &record
+		}
+	}
+
+	if updatedRecord == nil {
+		t.Fatal("Record was never updated.")
 	}
 }

@@ -54,7 +54,7 @@ type Provider struct {
 	// used to determine the public ip of the machine.
 	// You must first whitelist your IP in the namecheap console
 	// before using the API.
-	ClientIP string `json:"client_ip,omitempty`
+	ClientIP string `json:"client_ip,omitempty"`
 
 	mu sync.Mutex
 }
@@ -125,8 +125,8 @@ func (p *Provider) AppendRecords(ctx context.Context, zone string, records []lib
 }
 
 // SetRecords sets the records in the zone, either by updating existing records or creating new ones.
-// It returns the updated records. // Note that the records returned do NOT have their IDs set as the namecheap
-// API does not return this info.
+// It returns the updated records. Note that this method may alter the IDs of existing records on the
+// server but may return records without their IDs set or with their old IDs set.
 func (p *Provider) SetRecords(ctx context.Context, zone string, records []libdns.Record) ([]libdns.Record, error) {
 	var hostRecords []namecheap.HostRecord
 	for _, r := range records {
