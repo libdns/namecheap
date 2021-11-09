@@ -18,6 +18,7 @@ var (
 	apiUser     = flag.String("username", "", "Namecheap API username.")
 	apiEndpoint = flag.String("endpoint", "https://api.sandbox.namecheap.com/xml.response", "Namecheap API endpoint.")
 	domain      = flag.String("domain", "", "Domain to test with of the form sld.tld <testing.com>")
+	clientIP    = flag.String("client-ip", "", "Public IP address of client machine")
 )
 
 func TestIntegration(t *testing.T) {
@@ -25,6 +26,7 @@ func TestIntegration(t *testing.T) {
 		APIKey:      *apiKey,
 		User:        *apiUser,
 		APIEndpoint: *apiEndpoint,
+		ClientIP:    *clientIP,
 	}
 
 	newRecords := []libdns.Record{
