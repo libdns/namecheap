@@ -71,6 +71,8 @@ func (p *Provider) getClient() (*namecheap.Client, error) {
 
 	if p.ClientIP == "" {
 		options = append(options, namecheap.AutoDiscoverPublicIP())
+	} else {
+		options = append(options, namecheap.WithClientIP(p.ClientIP))
 	}
 
 	client, err := namecheap.NewClient(p.APIKey, p.User, options...)
