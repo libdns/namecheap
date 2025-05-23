@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 )
 
 // Provides some basic structs to interact with the Namecheap api with.
@@ -61,13 +60,61 @@ type HostRecord struct {
 	// MX preference for host. Applicable for MX records only.
 	MXPref string
 
+	// EmailType Possible values are:
+	// MXE - to set up your custom MXE record.
+	// MX - to set up custom MX records of your mail provider.
+	// FWD - to set up MX records for our Free Email Forwarding service.
+	// OX - to set up MX records for our Private Email service.
+	EmailType string
+
 	// 60 to 60000
 	// Default Value: 1800
 	TTL uint16
 
+	// Flag is an unsigned integer between 0 and 255.
+	// The flag value is an 8-bit number, the most significant bit of which indicates
+	// the criticality of understanding of a record by a CA.
+	// It's recommended to use '0'
+	Flag uint8
+
+	// Tag is a non-zero sequence of US-ASCII letters and numbers in lower case.
+	// For CAA records, possible values are:
+	// - issue: specifies the certification authority that is authorized to issue a certificate
+	// - issuewild: specifies the certification authority that is allowed to issue a wildcard certificate
+	// - iodef: specifies the e-mail address or URL a CA should use to notify a client
+	Tag string
+
 	// HostID is the unique ID of the host record.
 	// Readonly field.
 	HostID string
+}
+
+type HostRecordKey struct {
+	Name       string
+	RecordType RecordType
+	TTL        uint16
+	Address    string
+}
+
+type Domain struct {
+	TLD string
+	SLD string
+}
+
+func (h HostRecord) DeleteKey() HostRecordKey {
+	return HostRecordKey{h.Name, h.RecordType, h.TTL, h.Address}
+}
+
+func (h HostRecord) SetKey() HostRecordKey {
+	return HostRecordKey{Name: h.Name, RecordType: h.RecordType}
+}
+
+// AppendKey is used to determine if a host record is new or an existing one
+// when appending records. The libdns spec doesn't specify for AppendRecords how to
+// determine if a record is new or existing but namecheap lets you have multiple records
+// with the same name + type as long as the address is different.
+func (h HostRecord) AppendKey() HostRecordKey {
+	return HostRecordKey{Name: h.Name, RecordType: h.RecordType, Address: h.Address}
 }
 
 // This gets unmarshalled from the server's XML response.
@@ -94,7 +141,9 @@ type getHostsResponseRecord struct {
 
 // Converts the XML response into the public HostRecord struct.
 func (r getHostsResponseRecord) ToHostRecord() HostRecord {
-	return HostRecord{
+	// Confusingly, the Flag and Tag fields are not set on the response and are instead returned in the Address field.
+	// If this is a CAA record, we need to parse the Address field to get the Flag and Tag.
+	record := HostRecord{
 		HostID:     r.HostID,
 		Name:       r.Name,
 		RecordType: RecordType(r.Type),
@@ -102,6 +151,7 @@ func (r getHostsResponseRecord) ToHostRecord() HostRecord {
 		MXPref:     r.MXPref,
 		TTL:        r.TTL,
 	}
+	return record
 }
 
 // addToValues adds the HostRecord fields to values. Ignores read only fields.
@@ -118,6 +168,9 @@ func addToValues(host HostRecord, hostNumber int, values *url.Values) {
 	setValueIfPresent("Address", string(host.Address))
 	setValueIfPresent("MXPref", host.MXPref)
 	setValueIfPresent("TTL", strconv.Itoa(int(host.TTL)))
+	setValueIfPresent("EmailType", host.EmailType)
+	setValueIfPresent("Flag", strconv.Itoa(int(host.Flag)))
+	setValueIfPresent("Tag", host.Tag)
 }
 
 // getPublicIP tries to determine the public ip of the machine by
@@ -161,9 +214,6 @@ type Client struct {
 
 	// Will determine the PublicIP of the client by calling a service.
 	autoDiscoverPublicIP bool
-
-	// mu synchronizes access to DeleteHosts to prevent race conditions
-	mu sync.Mutex
 }
 
 type ClientOption func(*Client) error
@@ -231,14 +281,35 @@ func NewClient(apiKey, apiUser string, opts ...ClientOption) (*Client, error) {
 	return client, nil
 }
 
-// GetHosts returns the host records for the given domain.
-func (c *Client) GetHosts(ctx context.Context, domain string) ([]HostRecord, error) {
-	u, err := c.buildURL("namecheap.domains.dns.getHosts", domain)
+func (c *Client) buildRequest(ctx context.Context, command string, opts requestParams) (*http.Request, error) {
+	q := url.Values{}
+	q.Set("ApiUser", c.apiUser)
+	q.Set("ApiKey", c.apiKey)
+	q.Set("UserName", c.username)
+	q.Set("ClientIp", c.clientIP)
+	q.Set("Command", command)
+
+	if opts.Domain != nil {
+		q.Set("TLD", opts.Domain.TLD)
+		q.Set("SLD", opts.Domain.SLD)
+	}
+
+	for i, host := range opts.Hosts {
+		addToValues(host, i+1, &q)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpointURL.String(), strings.NewReader(q.Encode()))
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	return req, nil
+}
+
+// GetHosts returns the host records for the given domain.
+func (c *Client) GetHosts(ctx context.Context, domain Domain) ([]HostRecord, error) {
+	req, err := c.buildRequest(ctx, "namecheap.domains.dns.getHosts", requestParams{Domain: &domain})
 	if err != nil {
 		return nil, err
 	}
@@ -256,62 +327,8 @@ func (c *Client) GetHosts(ctx context.Context, domain string) ([]HostRecord, err
 	return records, nil
 }
 
-// AddHosts adds the host records for the given domain.
-func (c *Client) AddHosts(ctx context.Context, domain string, hosts []HostRecord) ([]HostRecord, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Need to first get the existing hosts before adding new ones since we can only "set hosts" in namecheap api.
-	existingHosts, err := c.GetHosts(ctx, domain)
-	if err != nil {
-		return nil, err
-	}
-
-	// Add the hosts to the existing hosts to try and preserve the original order.
-	existingHosts = append(existingHosts, hosts...)
-	_, err = c.setHosts(ctx, domain, existingHosts)
-	if err != nil {
-		return nil, err
-	}
-
-	return hosts, err
-}
-
-// DeleteHosts removes the host records for the given domain.
-// Deletes the hosts by HostID. Deleting a host that does not exist
-// has no effect.
-func (c *Client) DeleteHosts(ctx context.Context, domain string, hosts []HostRecord) ([]HostRecord, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	existingHosts, err := c.GetHosts(ctx, domain)
-	if err != nil {
-		return nil, err
-	}
-
-	hostsToRemoveByID := make(map[string]HostRecord)
-	for _, host := range hosts {
-		hostsToRemoveByID[host.HostID] = host
-	}
-
-	// Build the array from only existing hosts that aren't being removed.
-	var updatedHosts []HostRecord
-	for _, host := range existingHosts {
-		if _, found := hostsToRemoveByID[host.HostID]; !found {
-			updatedHosts = append(updatedHosts, host)
-		}
-	}
-
-	return c.setHosts(ctx, domain, updatedHosts)
-}
-
-func (c *Client) setHosts(ctx context.Context, domain string, hosts []HostRecord) ([]HostRecord, error) {
-	u, err := c.buildURL("namecheap.domains.dns.setHosts", domain, hosts...)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), nil)
+func (c *Client) SetHosts(ctx context.Context, domain Domain, hosts []HostRecord) ([]HostRecord, error) {
+	req, err := c.buildRequest(ctx, "namecheap.domains.dns.setHosts", requestParams{Domain: &domain, Hosts: hosts})
 	if err != nil {
 		return nil, err
 	}
@@ -320,71 +337,25 @@ func (c *Client) setHosts(ctx context.Context, domain string, hosts []HostRecord
 	return hosts, err
 }
 
-// SetHosts creates or updates existing hosts. Existing hosts must have a host ID
-// otherwise the record is treated as a new host. Does not delete any existing hosts.
-func (c *Client) SetHosts(ctx context.Context, domain string, hosts []HostRecord) ([]HostRecord, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// TODO: If this grows any more, create a 'requestBuilder' following the builder pattern for this.
+type requestParams struct {
+	Domain *Domain
+	Hosts  []HostRecord
+}
 
-	existingHosts, err := c.GetHosts(ctx, domain)
+// GetTLDs returns all TLDs available for namecheap.
+func (c *Client) GetTLDs(ctx context.Context) ([]TLD, error) {
+	req, err := c.buildRequest(ctx, "namecheap.domains.getTldList", requestParams{})
 	if err != nil {
 		return nil, err
 	}
 
-	existingHostsByID := make(map[string]*HostRecord)
-	for i := range existingHosts {
-		existingHostsByID[existingHosts[i].HostID] = &existingHosts[i]
+	apiResp, err := doRequest(req)
+	if err != nil {
+		return nil, err
 	}
 
-	var newHosts []HostRecord
-	for _, host := range hosts {
-		if existingHost, found := existingHostsByID[host.HostID]; found {
-			// This will update the value in existingHosts
-			*existingHost = host
-		} else {
-			newHosts = append(newHosts, host)
-		}
-	}
-
-	existingHosts = append(existingHosts, newHosts...)
-
-	return c.setHosts(ctx, domain, existingHosts)
-}
-
-// buildURL builds a URL needed to talk to the namecheap API based on the query params.
-func (c *Client) buildURL(command, domain string, hosts ...HostRecord) (*url.URL, error) {
-	// example.com. should be SLD: example TLD: com
-	// example.co.uk should be SLD: example TLD: co.uk
-	if strings.HasSuffix(domain, ".") {
-		domain = domain[:len(domain)-1]
-	}
-
-	split_domain := strings.Split(domain, ".")
-	if len(split_domain) < 2 {
-		return nil, fmt.Errorf("domain: %s is not a valid domain. Expected at least 1 TLD and 1 SLD", domain)
-	}
-
-	sld := split_domain[0]
-	// Assuming everything else is TLD. This may be a bad assumption.
-	tld := strings.Join(split_domain[1:], ".")
-
-	u := *c.endpointURL
-	q := u.Query()
-	q.Set("ApiUser", c.apiUser)
-	q.Set("ApiKey", c.apiKey)
-	q.Set("UserName", c.username)
-	q.Set("ClientIp", c.clientIP)
-	q.Set("Command", command)
-	q.Set("TLD", tld)
-	q.Set("SLD", sld)
-
-	for i, host := range hosts {
-		addToValues(host, i+1, &q)
-	}
-
-	u.RawQuery = q.Encode()
-
-	return &u, nil
+	return apiResp.CommandResponse.TLDs.TLDs, nil
 }
 
 type apiErrors []apiError
@@ -437,10 +408,20 @@ type apiResponse struct {
 	// Let's just ignore the other fields because we probably don't need them..
 }
 
+type TLD struct {
+	Name string `xml:"Name,attr"`
+	// There's more fields but we only use the name for now.
+}
+
+type tlds struct {
+	TLDs []TLD `xml:"Tld"`
+}
+
 type commandResponse struct {
 	Type                    string                   `xml:"Type,attr"`
 	DomainDNSSetHostsResult *domainDNSSetHostsResult `xml:"DomainDNSSetHostsResult,omitempty"`
 	DomainDNSGetHostsResult *domainDNSGetHostsResult `xml:"DomainDNSGetHostsResult,omitempty"`
+	TLDs                    tlds                     `xml:"Tlds,omitempty"`
 }
 
 type domainDNSSetHostsResult struct {
