@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // Provides some basic structs to interact with the Namecheap api with.
@@ -27,9 +28,7 @@ const (
 	defaultDiscoveryAddress = "https://icanhazip.com"
 )
 
-var (
-	defaultEndpointURL = mustParse(defaultEndpoint)
-)
+var defaultEndpointURL = mustParse(defaultEndpoint)
 
 // RecordType is the type of DNS Record.
 type RecordType string
@@ -162,6 +161,9 @@ type Client struct {
 
 	// Will determine the PublicIP of the client by calling a service.
 	autoDiscoverPublicIP bool
+
+	// mu synchronizes access to DeleteHosts to prevent race conditions
+	mu sync.Mutex
 }
 
 type ClientOption func(*Client) error
@@ -256,6 +258,9 @@ func (c *Client) GetHosts(ctx context.Context, domain string) ([]HostRecord, err
 
 // AddHosts adds the host records for the given domain.
 func (c *Client) AddHosts(ctx context.Context, domain string, hosts []HostRecord) ([]HostRecord, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	// Need to first get the existing hosts before adding new ones since we can only "set hosts" in namecheap api.
 	existingHosts, err := c.GetHosts(ctx, domain)
 	if err != nil {
@@ -276,12 +281,15 @@ func (c *Client) AddHosts(ctx context.Context, domain string, hosts []HostRecord
 // Deletes the hosts by HostID. Deleting a host that does not exist
 // has no effect.
 func (c *Client) DeleteHosts(ctx context.Context, domain string, hosts []HostRecord) ([]HostRecord, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	existingHosts, err := c.GetHosts(ctx, domain)
 	if err != nil {
 		return nil, err
 	}
 
-	var hostsToRemoveByID = make(map[string]HostRecord)
+	hostsToRemoveByID := make(map[string]HostRecord)
 	for _, host := range hosts {
 		hostsToRemoveByID[host.HostID] = host
 	}
@@ -315,12 +323,15 @@ func (c *Client) setHosts(ctx context.Context, domain string, hosts []HostRecord
 // SetHosts creates or updates existing hosts. Existing hosts must have a host ID
 // otherwise the record is treated as a new host. Does not delete any existing hosts.
 func (c *Client) SetHosts(ctx context.Context, domain string, hosts []HostRecord) ([]HostRecord, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	existingHosts, err := c.GetHosts(ctx, domain)
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 
-	var existingHostsByID = make(map[string]*HostRecord)
+	existingHostsByID := make(map[string]*HostRecord)
 	for i := range existingHosts {
 		existingHostsByID[existingHosts[i].HostID] = &existingHosts[i]
 	}
