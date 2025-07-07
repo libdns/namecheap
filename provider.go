@@ -14,21 +14,19 @@ import (
 
 func parseIntoHostRecord(record libdns.Record) namecheap.HostRecord {
 	return namecheap.HostRecord{
-		HostID:     record.ID,
-		RecordType: namecheap.RecordType(record.Type),
-		Name:       record.Name,
-		TTL:        uint16(record.TTL.Seconds()),
-		Address:    record.Value,
+		RecordType: namecheap.RecordType(record.RR().Type),
+		Name:       record.RR().Name,
+		TTL:        uint16(record.RR().TTL.Seconds()),
+		Address:    record.RR().Data,
 	}
 }
 
 func parseFromHostRecord(hostRecord namecheap.HostRecord) libdns.Record {
-	return libdns.Record{
-		ID:    hostRecord.HostID,
-		Type:  string(hostRecord.RecordType),
-		Name:  hostRecord.Name,
-		TTL:   time.Duration(hostRecord.TTL) * time.Second,
-		Value: hostRecord.Address,
+	return libdns.RR{
+		Type: string(hostRecord.RecordType),
+		Name: hostRecord.Name,
+		TTL:  time.Duration(hostRecord.TTL) * time.Second,
+		Data: hostRecord.Address,
 	}
 }
 
