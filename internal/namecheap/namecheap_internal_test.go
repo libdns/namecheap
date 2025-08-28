@@ -9,23 +9,9 @@ import (
 
 // This mostly tests the xml unmarshaling.
 
-var (
-	namecheapXMLNS = xml.Name{Space: "https://api.namecheap.com/xml.response", Local: "ApiResponse"}
-)
+var namecheapXMLNS = xml.Name{Space: "https://api.namecheap.com/xml.response", Local: "ApiResponse"}
 
 const (
-	setHostsResponse = `<?xml version="1.0" encoding="UTF-8"?>
-<ApiResponse xmlns="https://api.namecheap.com/xml.response" Status="OK">
-  <Errors />
-  <RequestedCommand>namecheap.domains.dns.setHosts</RequestedCommand>
-  <CommandResponse Type="namecheap.domains.dns.setHosts">
-    <DomainDNSSetHostsResult Domain="domain.com" IsSuccess="true" />
-  </CommandResponse>
-  <Server>SERVER-NAME</Server>
-  <GMTTimeDifference>+5</GMTTimeDifference>
-  <ExecutionTime>32.76</ExecutionTime>
-</ApiResponse>`
-
 	getHostsResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <ApiResponse xmlns="https://api.namecheap.com/xml.response" Status="OK">
   <Errors />
