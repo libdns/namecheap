@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
-
 	"github.com/libdns/libdns"
 	"github.com/libdns/namecheap"
 )
@@ -59,8 +57,10 @@ func TestIntegration(t *testing.T) {
 	}
 
 	// IDs are not returned by append. Maybe they should be?
-	ignoreIDField := cmpopts.IgnoreFields(libdns.RR{}, "ID")
-	if diff := cmp.Diff(addedRecords, records, ignoreIDField); diff != "" {
+	//ignoreIDField := cmpopts.IgnoreFields(libdns.RR{}, "ID")
+	//if diff := cmp.Diff(addedRecords, records, ignoreIDField); diff != "" {
+	if diff := cmp.Diff(addedRecords, records); diff != "" {
+		t.Log(addedRecords, records)
 		t.Fatalf("Added records not equal to fetched records. Diff: %s", diff)
 	}
 
@@ -102,7 +102,7 @@ func TestSetRecordsKeepsExisting(t *testing.T) {
 		},
 		libdns.RR{
 			Type: "A",
-			Name: "www.face.com",
+			Name: "www",
 			Data: "127.0.0.1",
 			TTL:  time.Second * 1799,
 		},

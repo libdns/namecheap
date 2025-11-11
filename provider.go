@@ -4,6 +4,7 @@ package namecheap
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -12,7 +13,17 @@ import (
 	"github.com/libdns/namecheap/internal/namecheap"
 )
 
+var libDNSRecordMap map[string]libdns.Record = map[string]libdns.Record{}
+var namecheapHostRecordMap map[string]namecheap.HostRecord = map[string]namecheap.HostRecord{}
+
 func parseIntoHostRecord(record libdns.Record) namecheap.HostRecord {
+
+	recordKey := libDNSHostRecordKey(record)
+	if val, ok := namecheapHostRecordMap[recordKey]; ok {
+		return val
+	}
+
+	// no record found, make a new one....
 	return namecheap.HostRecord{
 		RecordType: namecheap.RecordType(record.RR().Type),
 		Name:       record.RR().Name,
@@ -22,12 +33,15 @@ func parseIntoHostRecord(record libdns.Record) namecheap.HostRecord {
 }
 
 func parseFromHostRecord(hostRecord namecheap.HostRecord) libdns.Record {
-	return libdns.RR{
+	libDNSRecordMap[hostRecord.HostID] = libdns.RR{
 		Type: string(hostRecord.RecordType),
 		Name: hostRecord.Name,
 		TTL:  time.Duration(hostRecord.TTL) * time.Second,
 		Data: hostRecord.Address,
 	}
+	namecheapHostRecordMap[libDNSHostRecordKey(libDNSRecordMap[hostRecord.HostID])] = hostRecord
+
+	return libDNSRecordMap[hostRecord.HostID]
 }
 
 // Provider facilitates DNS record manipulation with namecheap.
@@ -175,3 +189,7 @@ var (
 	_ libdns.RecordSetter   = (*Provider)(nil)
 	_ libdns.RecordDeleter  = (*Provider)(nil)
 )
+
+func libDNSHostRecordKey(record libdns.Record) string {
+	return fmt.Sprintf("%s:%s:%s:%d", record.RR().Name, record.RR().Data, record.RR().Type, record.RR().TTL)
+}
