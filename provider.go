@@ -241,6 +241,11 @@ func (p *Provider) getDomain(ctx context.Context, zone string) (namecheap.Domain
 		return namecheap.Domain{}, err
 	}
 
+	// Sort TLDs by length (longest first) to avoid matching "site" before "website"
+	slices.SortFunc(tlds, func(a, b string) int {
+		return len(b) - len(a)
+	})
+
 	// See if our zone is a substring match of any of the tlds.
 	var domain namecheap.Domain
 	for _, tld := range tlds {
